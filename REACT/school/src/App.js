@@ -530,6 +530,12 @@ function SubjectOfferedPage() {
 
 // ─── ENROLLMENT PAGE ───────────────────────────────────────────────────────────
 function EnrollmentPage() {
+	// List view
+	const [enrollments, setEnrollments] = useState([]);
+	const [search, setSearch] = useState('');
+	const [showForm, setShowForm] = useState(false);
+
+	// Enrollment form
 	const [studentIdInput, setStudentIdInput] = useState('');
 	const [student, setStudent] = useState(null);
 	const [studentError, setStudentError] = useState('');
@@ -541,6 +547,35 @@ function EnrollmentPage() {
 	const dateStr = now.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
 	const timeStr = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
 
+	const fetchEnrollments = async () => {
+		try {
+			const res = await fetch(`${API}/enrollment`);
+			const json = await res.json();
+			setEnrollments(Array.isArray(json) ? json : []);
+		} catch (e) { console.error(e); }
+	};
+
+	useEffect(() => { fetchEnrollments(); }, []);
+
+	const filtered = enrollments.filter(r => {
+		const q = search.toLowerCase();
+		return r.enroll_id?.toString().includes(q) ||
+			r.enroll_code?.toLowerCase().includes(q) ||
+			r.student_id?.toString().includes(q) ||
+			r.status?.toLowerCase().includes(q) ||
+			r.enroll_date?.includes(q);
+	});
+
+	const handleDelete = async (id) => {
+		if (!window.confirm(`Delete enrollment ${id}?`)) return;
+		try {
+			const res = await fetch(`${API}/enrollment/${id}`, { method: 'DELETE' });
+			if (!res.ok) throw new Error();
+			fetchEnrollments();
+		} catch (e) { console.error(e); }
+	};
+
+	// Form handlers
 	const handleStudentSearch = async () => {
 		setStudentError(''); setStudent(null);
 		if (!studentIdInput.trim()) return;
@@ -572,21 +607,24 @@ function EnrollmentPage() {
 	const removeFromCart = (suboffid) => setCart(prev => prev.filter(c => c.suboffid !== suboffid));
 	const totalUnits = cart.reduce((sum, c) => sum + parseFloat(c.units || 0), 0);
 
+	const clearForm = () => {
+		setStudentIdInput(''); setStudent(null); setCart([]);
+		setStudentError(''); setEdpError(''); setEdpInput('');
+	};
+
 	const handleEnroll = async () => {
 		if (!student) { alert('Please select a student first.'); return; }
 		if (cart.length === 0) { alert('Please add at least one subject.'); return; }
 		try {
-			// Short unique enroll_code within varchar(10) limit
 			const enroll_code = 'E' + String(student.idno).slice(-4) + String(Date.now()).slice(-5);
 			const enrollRes = await fetch(`${API}/enrollment`, {
 				method: 'POST', headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({
-					enroll_code: enroll_code,
+					enroll_code,
 					enroll_date: new Date().toISOString().slice(0, 10),
 					student_id: student.idno, status: 'Enrolled', amt_paid: '0',
 				}),
 			});
-			// Show actual server error if any
 			if (!enrollRes.ok) {
 				const errData = await enrollRes.json();
 				throw new Error(JSON.stringify(errData));
@@ -594,22 +632,67 @@ function EnrollmentPage() {
 			const enrollData = await enrollRes.json();
 			const newEnrollId = enrollData.insertId;
 			for (const item of cart) {
-				const detailRes = await fetch(`${API}/enrollment_details`, {
+				await fetch(`${API}/enrollment_details`, {
 					method: 'POST', headers: { 'Content-Type': 'application/json' },
 					body: JSON.stringify({ enroll_id: newEnrollId, suboffid: item.suboffid }),
 				});
-				if (!detailRes.ok) {
-					const errData = await detailRes.json();
-					console.error('Detail insert error:', errData);
-				}
 			}
 			alert(`Enrollment successful! ID: ${newEnrollId}`);
-			setStudentIdInput(''); setStudent(null); setCart([]);
+			clearForm();
+			setShowForm(false);
+			fetchEnrollments();
 		} catch (e) { alert('Enrollment failed: ' + e.message); }
 	};
 
+	// ── LIST VIEW ──────────────────────────────────────────────────────────────
+	if (!showForm) {
+		return (
+			<div className="w3-container w3-padding">
+				<div className="w3-row w3-padding">
+					<div className="w3-col" style={{ width: '60%' }}>
+						<input type="text" className="w3-input w3-border"
+							placeholder="Search by enroll code, student ID, status..."
+							value={search} onChange={e => setSearch(e.target.value)} />
+					</div>
+					<div className="w3-col" style={{ width: '40%', textAlign: 'right' }}>
+						<button className="w3-button w3-green" onClick={() => setSearch(search)}>&#128269; SEARCH</button>
+						&nbsp;
+						<button className="w3-button w3-blue" onClick={() => { clearForm(); setShowForm(true); }}>+ADD</button>
+					</div>
+				</div>
+				<table className="w3-table-all">
+					<thead>
+						<tr className="w3-indigo">
+							<th>ENROLL ID</th><th>ENROLL CODE</th><th>DATE</th>
+							<th>STUDENT ID</th><th>STATUS</th><th>AMT PAID</th><th>CONTROL</th>
+						</tr>
+					</thead>
+					<tbody>
+						{filtered.length > 0 ? filtered.map(r => (
+							<tr key={r.enroll_id}>
+								<td>{r.enroll_id}</td><td>{r.enroll_code}</td><td>{r.enroll_date}</td>
+								<td>{r.student_id}</td><td>{r.status}</td><td>{r.amt_paid}</td>
+								<td>
+									<button className="w3-button w3-red w3-small" onClick={() => handleDelete(r.enroll_id)}>&times;</button>
+								</td>
+							</tr>
+						)) : <tr><td colSpan="7" className="w3-center">No records found.</td></tr>}
+					</tbody>
+				</table>
+			</div>
+		);
+	}
+
+	// ── ENROLLMENT FORM VIEW ───────────────────────────────────────────────────
 	return (
 		<div className="w3-container w3-padding">
+			{/* Back button */}
+			<div style={{ marginBottom: '8px' }}>
+				<button className="w3-button w3-grey" onClick={() => { clearForm(); setShowForm(false); }}>
+					&#8592; BACK TO LIST
+				</button>
+			</div>
+
 			{/* HEADER: student search + date/time */}
 			<div className="w3-row w3-padding" style={{ display: 'flex', alignItems: 'center' }}>
 				<div style={{ display: 'flex', gap: '6px', alignItems: 'center', flex: 1 }}>
@@ -658,7 +741,7 @@ function EnrollmentPage() {
 					</tr>
 				</thead>
 				<tbody>
-					{cart.length > 0 ? cart.map((c) => (
+					{cart.length > 0 ? cart.map(c => (
 						<tr key={c.suboffid}>
 							<td>{c.edpcode}</td><td>{c.subjcode}</td><td>{c.subjdesc}</td>
 							<td>{c.start_time} - {c.end_time}</td><td>{c.days}</td><td>{c.room}</td><td>{c.units}</td>
@@ -674,9 +757,7 @@ function EnrollmentPage() {
 			<div className="w3-row" style={{ marginTop: '12px', display: 'flex', alignItems: 'center' }}>
 				<div style={{ flex: 1, display: 'flex', gap: '8px' }}>
 					<button className="w3-button w3-indigo" onClick={handleEnroll}>ENROLL</button>
-					<button className="w3-button w3-grey" onClick={() => { setStudentIdInput(''); setStudent(null); setCart([]); setStudentError(''); setEdpError(''); }}>
-						&#x21BA; CLEAR
-					</button>
+					<button className="w3-button w3-grey" onClick={clearForm}>&#x21BA; CLEAR</button>
 				</div>
 				<div style={{ textAlign: 'right' }}>
 					<span style={{ fontWeight: 'bold', marginRight: '10px' }}>TOTAL UNITS:</span>
